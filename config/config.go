@@ -2,666 +2,417 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
-	"regexp"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
-	"github.com/hashicorp/go-envparse"
-	"github.com/ochinchina/go-ini"
-	log "github.com/sirupsen/logrus"
+	"github.com/qjpcpu/supervisord/sys"
+	"github.com/BurntSushi/toml"
+	"github.com/qjpcpu/fp"
 )
 
-// Entry standards for a configuration section in supervisor configuration file
-type Entry struct {
-	ConfigDir string
-	Group     string
-	Name      string
-	keyValues map[string]string
+const (
+	DefaultStopWaitSecs    = 15
+	DefaultStopSignal      = "TERM"
+	DefaultSuccessExitCode = 0
+)
+
+type SupervisorConfigInfo struct {
+	File   string
+	Config *SupervisorConfig
 }
 
-// IsProgram returns true if this is a program section
-func (c *Entry) IsProgram() bool {
-	return strings.HasPrefix(c.Name, "program:")
+type SupervisorConfig struct {
+	AdminListen            int              `toml:"admin_listen" param:"adminlisten,supervisord admin listen on"`
+	AdminBindIP            string           `toml:"admin_bind_ip" param:"admin_bind_ip,supervisord listen on ip default 0.0.0.0"`
+	AdminSock              string           `toml:"admin_sock" param:"admin_sock,supervisord listen on unix socket"`
+	Log                    string           `toml:"log,omitempty" param:"log,supervisord log file"`
+	Process                []*ProcessConfig `toml:"process" param:"-"`
+	ExitWhenAllProcessDone bool             `toml:"exit_when_all_done" param:"exit_when_all_done,exit when all process finished with success"`
+	EnableLogFinalizer     bool             `toml:"enable_log_finalizer" param:"enable_log_finalizer,supervisor would not clean log when set false"`
+	Daemonize              bool             `toml:"daemonize" param:"daemonize,daemonize supervisord"`
+	ReapZombie             bool             `toml:"reap_zombie" param:"reap_zombie,reap zombie process"`
+	HideArgs               bool             `toml:"hide_args" param:"hide_args,hide command arguments"`
+	DisableRCE             bool             `toml:"disable_rce" param:"disable_rce,disable rce"`
 }
 
-// GetProgramName returns program name
-func (c *Entry) GetProgramName() string {
-	if strings.HasPrefix(c.Name, "program:") {
-		return c.Name[len("program:"):]
+type AddProcConfig struct {
+	*ProcessConfig
+	PersistConfig bool `toml:"persist" param:"persist,persist proc config"`
+}
+
+type ProcessConfig struct {
+	Name         string            `toml:"name" param:"-"`
+	Command      string            `toml:"command" param:"-"`
+	Args         []string          `toml:"args" param:"-"`
+	CWD          string            `toml:"cwd" param:"cwd,process cwd"`
+	ENV          map[string]string `toml:"env" param:"env,process extra env vars, e.g. k1=v1,k2=v2"`
+	PidFile      string            `toml:"pid_file" param:"pid,process pid file"`
+	ExitCodes    []int             `toml:"exit_codes" param:"exitcodes,process exit code, e.g. 0,1,2"`
+	StopSignal   string            `toml:"stop_signal" param:"stopsig,process stop signal, default TERM"` // TERM
+	StopWaitSecs int               `toml:"stop_wait_secs" param:"stop_wait_secs,process terminating wait seconds, default 15s"`
+	Stdout       []string          `toml:"stdout" param:"stdout,process stdout, default /dev/stdout"`
+	Stderr       []string          `toml:"stderr" param:"stderr,process stderr, default /dev/stderr"`
+	PurgeFiles   []string          `toml:"purge_files" param:"purge_files,purge files when supervisord exiting"`
+	StdLogCount  int               `toml:"std_log_count" param:"std_log_count,keep max std log files, default 48"`
+	StdLogSize   string            `toml:"std_log_size" param:"std_log_size,keep max log size, default 1G"`
+	SysUser      string            `toml:"user,omitempty" param:"user,process user, default current user"`
+	SysGroup     string            `toml:"group,omitempty" param:"group,process user group, default current user group"`
+	OmitExitCode bool              `toml:"omit_exit_code,omitempty" param:"omit_exit_code,treat all exit code as success, default false"`
+}
+
+func (self *ProcessConfig) ParseFlags(flags map[string]string) error {
+	if err := parseFlags(self, flags); err != nil {
+		return err
 	}
-	return ""
+	self.FillDefaults()
+	return nil
 }
 
-// IsEventListener returns true if this section is for event listener
-func (c *Entry) IsEventListener() bool {
-	return strings.HasPrefix(c.Name, "eventlistener:")
-}
-
-// GetEventListenerName returns event listener name
-func (c *Entry) GetEventListenerName() string {
-	if strings.HasPrefix(c.Name, "eventlistener:") {
-		return c.Name[len("eventlistener:"):]
+func (self *ProcessConfig) FillDefaults() *ProcessConfig {
+	if len(self.Stdout) == 0 && len(self.Stderr) == 0 {
+		self.Stdout = []string{"/dev/stdout"}
+		self.Stderr = []string{"/dev/stderr"}
+	} else if len(self.Stdout) == 0 && len(self.Stderr) > 0 {
+		self.Stdout = self.Stderr
+	} else if len(self.Stdout) > 0 && len(self.Stderr) == 0 {
+		self.Stderr = self.Stdout
 	}
-	return ""
-}
-
-// IsGroup returns true if it is group section
-func (c *Entry) IsGroup() bool {
-	return strings.HasPrefix(c.Name, "group:")
-}
-
-// GetGroupName returns group name if entry is a group
-func (c *Entry) GetGroupName() string {
-	if strings.HasPrefix(c.Name, "group:") {
-		return c.Name[len("group:"):]
+	if len(self.ExitCodes) == 0 {
+		self.ExitCodes = []int{DefaultSuccessExitCode}
 	}
-	return ""
+	if self.CWD == "" {
+		self.CWD = fp.M(os.Getwd()).
+			Map(filepath.Abs).
+			Val().
+			String()
+	}
+	if self.StopSignal == "" {
+		self.StopSignal = DefaultStopSignal
+	}
+	if self.StopWaitSecs == 0 {
+		self.StopWaitSecs = DefaultStopWaitSecs
+	}
+	if self.StdLogCount == 0 {
+		self.StdLogCount = 48
+	}
+	if self.StdLogSize == "" {
+		self.StdLogSize = "1G"
+	}
+	return self
 }
 
-// GetPrograms returns slice with programs from the group
-func (c *Entry) GetPrograms() []string {
-	if c.IsGroup() {
-		r := c.GetStringArray("programs", ",")
-		for i, p := range r {
-			r[i] = strings.TrimSpace(p)
+func (self *ProcessConfig) Clone() *ProcessConfig {
+	data, _ := json.Marshal(self)
+	n := new(ProcessConfig)
+	json.Unmarshal(data, n)
+	return n
+}
+
+func (self *SupervisorConfig) ExistProcess(name string) bool {
+	for _, p := range self.Process {
+		if p.Name == name {
+			return true
 		}
-		return r
 	}
-	return make([]string, 0)
+	return false
 }
 
-func (c *Entry) setGroup(group string) {
-	c.Group = group
-}
-
-// String dumps configuration as a string
-func (c *Entry) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0))
-	for k, v := range c.keyValues {
-		fmt.Fprintf(buf, "%s=%s\n", k, v)
+func (self *SupervisorConfig) AddProcessConfig(p *ProcessConfig) {
+	for i, proc := range self.Process {
+		if proc.Name == p.Name {
+			self.Process[i] = p
+			return
+		}
 	}
-	return buf.String()
+	self.Process = append(self.Process, p)
 }
 
-// Config memory representation of supervisor configuration file
-type Config struct {
-	configFile string
-	// mapping between the section name and configuration entry
-	entries map[string]*Entry
-
-	ProgramGroup *ProcessGroup
-}
-
-// NewEntry creates configuration entry
-func NewEntry(configDir string) *Entry {
-	return &Entry{configDir, "", "", make(map[string]string)}
-}
-
-// NewConfig creates Config object
-func NewConfig(configFile string) *Config {
-	return &Config{configFile, make(map[string]*Entry), NewProcessGroup()}
-}
-
-// create a new entry or return the already-exist entry
-func (c *Config) createEntry(name string, configDir string) *Entry {
-	entry, ok := c.entries[name]
-
-	if !ok {
-		entry = NewEntry(configDir)
-		c.entries[name] = entry
+func (self *SupervisorConfig) AdminListenAddr() string {
+	if self.AdminSock != "" {
+		return fmt.Sprintf("unix://%s", self.AdminSock)
 	}
-	return entry
-}
-
-//
-// Load the configuration and return loaded programs
-func (c *Config) Load() ([]string, error) {
-	myini := ini.NewIni()
-	c.ProgramGroup = NewProcessGroup()
-	log.WithFields(log.Fields{"file": c.configFile}).Info("load configuration from file")
-	myini.LoadFile(c.configFile)
-
-	includeFiles := c.getIncludeFiles(myini)
-	for _, f := range includeFiles {
-		log.WithFields(log.Fields{"file": f}).Info("load configuration from file")
-		myini.LoadFile(f)
+	if self.AdminBindIP == "" {
+		return fmt.Sprintf(":%v", self.AdminListen)
 	}
-	return c.parse(myini), nil
+	return fmt.Sprintf("%v:%v", self.AdminBindIP, self.AdminListen)
 }
 
-func (c *Config) getIncludeFiles(cfg *ini.Ini) []string {
-	result := make([]string, 0)
-	if includeSection, err := cfg.GetSection("include"); err == nil {
-		key, err := includeSection.GetValue("files")
-		if err == nil {
-			env := NewStringExpression("here", c.GetConfigFileDir())
-			files := strings.Fields(key)
-			for _, fRaw := range files {
-				dir := c.GetConfigFileDir()
-				f, err := env.Eval(fRaw)
+func (self *SupervisorConfig) AdminDialProtocol() string {
+	if self.AdminSock != "" {
+		return "unix"
+	}
+	return "tcp"
+}
+
+func (self *SupervisorConfig) AdminDialAddr() string {
+	if self.AdminSock != "" {
+		sock, _ := filepath.Abs(self.AdminSock)
+		return sock
+	}
+	if self.AdminBindIP == "" {
+		return fmt.Sprintf("localhost:%v", self.AdminListen)
+	}
+	return fmt.Sprintf("%v:%v", self.AdminBindIP, self.AdminListen)
+}
+
+func supervisordDir() string {
+	path, _ := filepath.Abs(sys.Args()[0])
+	return filepath.Dir(path)
+}
+
+func findSupervisordConf() (string, error) {
+	dir := supervisordDir()
+	possibleSupervisordConf := []string{
+		filepath.Join(dir, `../conf/supervisord.conf`),
+		filepath.Join(dir, `supervisord.conf`),
+	}
+
+	for _, file := range possibleSupervisordConf {
+		if _, err := os.Stat(file); err == nil {
+			absFile, err := filepath.Abs(file)
+			if err == nil {
+				return absFile, nil
+			}
+			return file, nil
+		}
+	}
+
+	return "", fmt.Errorf("fail to find supervisord.conf")
+}
+
+var (
+	configContainer atomic.Value
+	conffileMutex   sync.Mutex
+)
+
+func init() {
+	if err := LoadConfig(); err != nil {
+		configContainer.Store(&SupervisorConfigInfo{
+			Config: new(SupervisorConfig),
+			File:   ``,
+		})
+	}
+}
+
+func GetConfig() (*SupervisorConfig, bool) {
+	s := configContainer.Load().(*SupervisorConfigInfo)
+	return s.Config, s.File != ""
+}
+
+func UpdateConfig(c *SupervisorConfig) error {
+	oldinfo := configContainer.Load().(*SupervisorConfigInfo)
+	info := &SupervisorConfigInfo{
+		Config: c,
+		File:   oldinfo.File,
+	}
+	info.Config = c
+	if info.File == "" {
+		info.File = filepath.Join(supervisordDir(), `../conf/supervisord.conf`)
+	}
+	conffileMutex.Lock()
+	defer conffileMutex.Unlock()
+	dir := filepath.Dir(info.File)
+	if _, err := os.Stat(dir); err != nil {
+		os.MkdirAll(dir, 0755)
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(c); err != nil {
+		return err
+	}
+	if err := os.WriteFile(info.File, buf.Bytes(), 0644); err != nil {
+		return err
+	}
+	configContainer.Store(info)
+	return nil
+}
+
+func CheckConfigFile() error {
+	conffileMutex.Lock()
+	defer conffileMutex.Unlock()
+	file, err := findSupervisordConf()
+	if err != nil {
+		return err
+	}
+	bytes, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var cnf SupervisorConfig
+	if err := toml.Unmarshal(bytes, &cnf); err != nil {
+		return err
+	}
+	return nil
+}
+
+func LoadConfig() error {
+	conffileMutex.Lock()
+	defer conffileMutex.Unlock()
+	file, err := findSupervisordConf()
+	if err != nil {
+		return err
+	}
+	bytes, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var cnf SupervisorConfig
+	if err := toml.Unmarshal(bytes, &cnf); err != nil {
+		return err
+	}
+	configContainer.Store(&SupervisorConfigInfo{
+		Config: &cnf,
+		File:   file,
+	})
+	return nil
+}
+
+func (self *SupervisorConfig) ParseFlags(flags map[string]string) error {
+	if err := parseFlags(self, flags); err != nil {
+		return err
+	}
+	if self.AdminListen == 0 && self.AdminSock == "" {
+		/* acquire admin port */
+		adminPort, err := sys.GetFreePort()
+		if err != nil {
+			return err
+		}
+		self.AdminListen = adminPort
+	}
+	return nil
+}
+
+func (self *AddProcConfig) ParseFlags(flags map[string]string) error {
+	if err := parseFlags(self, flags); err != nil {
+		return err
+	}
+	return nil
+}
+
+func parseFlags(objectPtr interface{}, flags map[string]string) error {
+	if len(flags) == 0 {
+		return nil
+	}
+	typ := reflect.TypeOf(objectPtr).Elem()
+	val := reflect.ValueOf(objectPtr).Elem()
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		p := field.Tag.Get(`param`)
+		if strings.HasPrefix(p, "-") || p == "" {
+			continue
+		}
+		name := strings.SplitN(p, ",", 2)[0]
+		if str, ok := flags[name]; ok {
+			switch field.Type.Kind() {
+			case reflect.String:
+				val.Field(i).SetString(strings.TrimSpace(str))
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				num, err := strconv.Atoi(str)
 				if err != nil {
-					continue
+					return err
 				}
-				if filepath.IsAbs(f) {
-					dir = filepath.Dir(f)
-				} else {
-					dir = filepath.Join(c.GetConfigFileDir(), filepath.Dir(f))
+				val.Field(i).SetInt(int64(num))
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				num, err := strconv.ParseUint(str, 10, 64)
+				if err != nil {
+					return err
 				}
-				fileInfos, err := ioutil.ReadDir(dir)
-				if err == nil {
-					goPattern := toRegexp(filepath.Base(f))
-					for _, fileInfo := range fileInfos {
-						if matched, err := regexp.MatchString(goPattern, fileInfo.Name()); matched && err == nil {
-							result = append(result, filepath.Join(dir, fileInfo.Name()))
-						}
-					}
+				val.Field(i).SetUint(num)
+			case reflect.Bool:
+				b, err := strconv.ParseBool(str)
+				if err != nil {
+					return err
 				}
-
-			}
-		}
-	}
-	return result
-}
-
-func (c *Config) parse(cfg *ini.Ini) []string {
-	c.setProgramDefaultParams(cfg)
-	c.parseGroup(cfg)
-	loadedPrograms := c.parseProgram(cfg)
-
-	// parse non-group, non-program and non-eventlistener sections
-	for _, section := range cfg.Sections() {
-		if !strings.HasPrefix(section.Name, "group:") && !strings.HasPrefix(section.Name, "program:") && !strings.HasPrefix(section.Name, "eventlistener:") {
-			entry := c.createEntry(section.Name, c.GetConfigFileDir())
-			c.entries[section.Name] = entry
-			entry.parse(section)
-		}
-	}
-	return loadedPrograms
-}
-
-// set the default parameters of programs
-func (c *Config) setProgramDefaultParams(cfg *ini.Ini) {
-	programDefaultSection, err := cfg.GetSection("program-default")
-	if err == nil {
-		for _, section := range cfg.Sections() {
-			if section.Name == "program-default" || !strings.HasPrefix(section.Name, "program:") {
-				continue
-			}
-			for _, key := range programDefaultSection.Keys() {
-				if !section.HasKey(key.Name()) {
-					section.Add(key.Name(), key.ValueWithDefault(""))
+				val.Field(i).SetBool(b)
+			case reflect.Map:
+				/* only map[string]string */
+				val.Field(i).Set(reflect.ValueOf(ParseEnv(str).AsMap()))
+			case reflect.Slice:
+				switch field.Type.Elem().Kind() {
+				case reflect.Int:
+					list := fp.StreamOf(strings.Split(str, ",")).
+						Reject(fp.EmptyString()).
+						Map(strconv.Atoi).
+						Ints()
+					val.Field(i).Set(reflect.ValueOf(list))
+				case reflect.Int64:
+					list := fp.StreamOf(strings.Split(str, ",")).
+						Reject(fp.EmptyString()).
+						Map(strconv.Atoi).
+						Map(func(i int) int64 { return int64(i) }).
+						Ints()
+					val.Field(i).Set(reflect.ValueOf(list))
+				case reflect.Int32:
+					list := fp.StreamOf(strings.Split(str, ",")).
+						Reject(fp.EmptyString()).
+						Map(strconv.Atoi).
+						Map(func(i int) int32 { return int32(i) }).
+						Ints()
+					val.Field(i).Set(reflect.ValueOf(list))
+				case reflect.String:
+					list := fp.StreamOf(strings.Split(str, ",")).
+						Reject(fp.EmptyString()).
+						Strings()
+					val.Field(i).Set(reflect.ValueOf(list))
 				}
 			}
-
-		}
-	}
-}
-
-// GetConfigFileDir returns directory of supervisord configuration file
-func (c *Config) GetConfigFileDir() string {
-	return filepath.Dir(c.configFile)
-}
-
-// convert supervisor file pattern to the go regrexp
-func toRegexp(pattern string) string {
-	tmp := strings.Split(pattern, ".")
-	for i, t := range tmp {
-		s := strings.Replace(t, "*", ".*", -1)
-		tmp[i] = strings.Replace(s, "?", ".", -1)
-	}
-	return strings.Join(tmp, "\\.")
-}
-
-// GetUnixHTTPServer returns unix_http_server configuration section
-func (c *Config) GetUnixHTTPServer() (*Entry, bool) {
-	entry, ok := c.entries["unix_http_server"]
-
-	return entry, ok
-}
-
-// GetSupervisord returns "supervisord" configuration section
-func (c *Config) GetSupervisord() (*Entry, bool) {
-	entry, ok := c.entries["supervisord"]
-	return entry, ok
-}
-
-// GetInetHTTPServer returns inet_http_server configuration section
-func (c *Config) GetInetHTTPServer() (*Entry, bool) {
-	entry, ok := c.entries["inet_http_server"]
-	return entry, ok
-}
-
-// GetSupervisorctl returns "supervisorctl" configuration section
-func (c *Config) GetSupervisorctl() (*Entry, bool) {
-	entry, ok := c.entries["supervisorctl"]
-	return entry, ok
-}
-
-// GetEntries returns configuration entries by filter
-func (c *Config) GetEntries(filterFunc func(entry *Entry) bool) []*Entry {
-	result := make([]*Entry, 0)
-	for _, entry := range c.entries {
-		if filterFunc(entry) {
-			result = append(result, entry)
-		}
-	}
-	return result
-}
-
-// GetGroups returns configuration entries of all program groups
-func (c *Config) GetGroups() []*Entry {
-	return c.GetEntries(func(entry *Entry) bool {
-		return entry.IsGroup()
-	})
-}
-
-// GetPrograms returns configuration entries of all programs
-func (c *Config) GetPrograms() []*Entry {
-	programs := c.GetEntries(func(entry *Entry) bool {
-		return entry.IsProgram()
-	})
-
-	return sortProgram(programs)
-}
-
-// GetEventListeners returns configuration entries of event listeners
-func (c *Config) GetEventListeners() []*Entry {
-	eventListeners := c.GetEntries(func(entry *Entry) bool {
-		return entry.IsEventListener()
-	})
-
-	return eventListeners
-}
-
-// GetProgramNames returns slice with all program names
-func (c *Config) GetProgramNames() []string {
-	result := make([]string, 0)
-	programs := c.GetPrograms()
-
-	programs = sortProgram(programs)
-	for _, entry := range programs {
-		result = append(result, entry.GetProgramName())
-	}
-	return result
-}
-
-// GetProgram returns the program configuration entry or nil
-func (c *Config) GetProgram(name string) *Entry {
-	for _, entry := range c.entries {
-		if entry.IsProgram() && entry.GetProgramName() == name {
-			return entry
 		}
 	}
 	return nil
 }
 
-// GetBool gets value of key as bool
-func (c *Entry) GetBool(key string, defValue bool) bool {
-	value, ok := c.keyValues[key]
+type Env struct {
+	Key, Val string
+}
 
-	if ok {
-		b, err := strconv.ParseBool(value)
-		if err == nil {
-			return b
-		}
+type EnvList []*Env
+
+func (e EnvList) String() string {
+	return fp.StreamOf(e).
+		Map(func(e *Env) string {
+			return e.Key + "=" + e.Val
+		}).
+		JoinStrings(",")
+}
+
+func (e EnvList) AsMap() map[string]string {
+	ret := make(map[string]string)
+	for _, item := range e {
+		ret[item.Key] = item.Val
 	}
-	return defValue
+	return ret
 }
 
-// HasParameter checks if key (parameter) has value
-func (c *Entry) HasParameter(key string) bool {
-	_, ok := c.keyValues[key]
-	return ok
+func (e EnvList) Drop(keys ...string) (ret EnvList) {
+	set := fp.StreamOf(keys).ToSet()
+	fp.StreamOf(e).
+		Reject(func(item *Env) bool {
+			return set.Contains(item.Key)
+		}).
+		ToSlice(&ret)
+	return
 }
 
-func toInt(s string, factor int, defValue int) int {
-	i, err := strconv.Atoi(s)
-	if err == nil {
-		return i * factor
-	}
-	return defValue
-}
-
-// GetInt gets value of the key as int
-func (c *Entry) GetInt(key string, defValue int) int {
-	value, ok := c.keyValues[key]
-
-	if ok {
-		return toInt(value, 1, defValue)
-	}
-	return defValue
-}
-
-func parseEnv(s string) *map[string]string {
-	result := make(map[string]string)
-	start := 0
-	n := len(s)
-	var i int
-	for {
-		// find the '='
-		for i = start; i < n && s[i] != '='; {
-			i++
-		}
-
-		if start >= n || i+1 >= n {
-			break
-		}
-
-		key := s[start:i]
-		start = i + 1
-		if s[start] == '"' {
-			for i = start + 1; i < n && s[i] != '"'; {
-				i++
-			}
-			if i < n {
-				result[strings.TrimSpace(key)] = strings.TrimSpace(s[start+1 : i])
-			}
-			if i+1 < n && s[i+1] == ',' {
-				start = i + 2
-			} else {
-				break
-			}
+func ParseEnv(str string) (list EnvList) {
+	arr := fp.StreamOf(strings.Split(str, ",")).Reject(fp.EmptyString()).Strings()
+	for _, str := range arr {
+		if strings.Contains(str, "=") {
+			vals := strings.SplitN(str, "=", 2)
+			list = append(list, &Env{Key: vals[0], Val: vals[1]})
 		} else {
-			for i = start; i < n && s[i] != ','; {
-				i++
-			}
-			if i < n {
-				result[strings.TrimSpace(key)] = strings.TrimSpace(s[start:i])
-				start = i + 1
+			if len(list) == 0 {
+				list = append(list, &Env{Key: str})
 			} else {
-				result[strings.TrimSpace(key)] = strings.TrimSpace(s[start:])
-				break
+				i := len(list) - 1
+				list[i].Val = strings.TrimPrefix(list[i].Val+","+str, ",")
 			}
 		}
 	}
-
-	return &result
-}
-
-func parseEnvFiles(s string) *map[string]string {
-	result := make(map[string]string)
-	for _, envFilePath := range strings.Split(s, ",") {
-		envFilePath = strings.TrimSpace(envFilePath)
-		f, err := os.Open(envFilePath)
-		if err != nil {
-			log.WithFields(log.Fields{
-				log.ErrorKey: err,
-				"file":       envFilePath,
-			}).Error("Read file failed: " + envFilePath)
-			continue
-		}
-		r, err := envparse.Parse(f)
-		if err != nil {
-			log.WithFields(log.Fields{
-				log.ErrorKey: err,
-				"file":       envFilePath,
-			}).Error("Parse env file failed: " + envFilePath)
-			continue
-		}
-		for k, v := range r {
-			result[k] = v
-		}
-	}
-	return &result
-}
-
-// GetEnv returns slice of strings with keys separated from values by single "=". An environment string example:
-//  environment = A="env 1",B="this is a test"
-func (c *Entry) GetEnv(key string) []string {
-	value, ok := c.keyValues[key]
-	result := make([]string, 0)
-
-	if ok {
-		for k, v := range *parseEnv(value) {
-			tmp, err := NewStringExpression("program_name", c.GetProgramName(),
-				"process_num", c.GetString("process_num", "0"),
-				"group_name", c.GetGroupName(),
-				"here", c.ConfigDir).Eval(fmt.Sprintf("%s=%s", k, v))
-			if err == nil {
-				result = append(result, tmp)
-			}
-		}
-	}
-
-	return result
-}
-
-// GetEnvFromFiles returns slice of strings with keys separated from values by single "=". An envFile example:
-//  envFiles = global.env,prod.env
-// cat global.env
-// varA=valueA
-func (c *Entry) GetEnvFromFiles(key string) []string {
-	value, ok := c.keyValues[key]
-	result := make([]string, 0)
-
-	if ok {
-		for k, v := range *parseEnvFiles(value) {
-			tmp, err := NewStringExpression("program_name", c.GetProgramName(),
-				"process_num", c.GetString("process_num", "0"),
-				"group_name", c.GetGroupName(),
-				"here", c.ConfigDir).Eval(fmt.Sprintf("%s=%s", k, v))
-			if err == nil {
-				result = append(result, tmp)
-			}
-		}
-	}
-
-	return result
-}
-
-// GetString returns value of the key as a string
-func (c *Entry) GetString(key string, defValue string) string {
-	s, ok := c.keyValues[key]
-
-	if ok {
-		env := NewStringExpression("here", c.ConfigDir)
-		repS, err := env.Eval(s)
-		if err == nil {
-			return repS
-		}
-		log.WithFields(log.Fields{
-			log.ErrorKey: err,
-			"program":    c.GetProgramName(),
-			"key":        key,
-		}).Warn("Unable to parse expression")
-	}
-	return defValue
-}
-
-// GetStringExpression returns value of key as a string and attempts to parse it with StringExpression
-func (c *Entry) GetStringExpression(key string, defValue string) string {
-	s, ok := c.keyValues[key]
-	if !ok || s == "" {
-		return ""
-	}
-
-	hostName, err := os.Hostname()
-	if err != nil {
-		hostName = "Unknown"
-	}
-	result, err := NewStringExpression("program_name", c.GetProgramName(),
-		"process_num", c.GetString("process_num", "0"),
-		"group_name", c.GetGroupName(),
-		"here", c.ConfigDir,
-		"host_node_name", hostName).Eval(s)
-
-	if err != nil {
-		log.WithFields(log.Fields{
-			log.ErrorKey: err,
-			"program":    c.GetProgramName(),
-			"key":        key,
-		}).Warn("unable to parse expression")
-		return s
-	}
-
-	return result
-}
-
-// GetStringArray gets string value and split it with "sep" to slice
-func (c *Entry) GetStringArray(key string, sep string) []string {
-	s, ok := c.keyValues[key]
-
-	if ok {
-		return strings.Split(s, sep)
-	}
-	return make([]string, 0)
-}
-
-// GetBytes returns value of the key as bytes setting.
-//
-//	logSize=1MB
-//	logSize=1GB
-//	logSize=1KB
-//	logSize=1024
-//
-func (c *Entry) GetBytes(key string, defValue int) int {
-	v, ok := c.keyValues[key]
-
-	if ok {
-		if len(v) > 2 {
-			lastTwoBytes := v[len(v)-2:]
-			if lastTwoBytes == "MB" {
-				return toInt(v[:len(v)-2], 1024*1024, defValue)
-			} else if lastTwoBytes == "GB" {
-				return toInt(v[:len(v)-2], 1024*1024*1024, defValue)
-			} else if lastTwoBytes == "KB" {
-				return toInt(v[:len(v)-2], 1024, defValue)
-			}
-		}
-		return toInt(v, 1, defValue)
-	}
-	return defValue
-}
-
-func (c *Entry) parse(section *ini.Section) {
-	c.Name = section.Name
-	for _, key := range section.Keys() {
-		c.keyValues[key.Name()] = strings.TrimSpace(key.ValueWithDefault(""))
-	}
-}
-
-func (c *Config) parseGroup(cfg *ini.Ini) {
-
-	// parse the group at first
-	for _, section := range cfg.Sections() {
-		if strings.HasPrefix(section.Name, "group:") {
-			entry := c.createEntry(section.Name, c.GetConfigFileDir())
-			entry.parse(section)
-			groupName := entry.GetGroupName()
-			programs := entry.GetPrograms()
-			for _, program := range programs {
-				c.ProgramGroup.Add(groupName, program)
-			}
-		}
-	}
-}
-
-func (c *Config) isProgramOrEventListener(section *ini.Section) (bool, string) {
-	// check if it is a program or event listener section
-	isProgram := strings.HasPrefix(section.Name, "program:")
-	isEventListener := strings.HasPrefix(section.Name, "eventlistener:")
-	prefix := ""
-	if isProgram {
-		prefix = "program:"
-	} else if isEventListener {
-		prefix = "eventlistener:"
-	}
-	return isProgram || isEventListener, prefix
-}
-
-// parse the sections starts with "program:" prefix.
-//
-// Return all the parsed program names in the ini
-func (c *Config) parseProgram(cfg *ini.Ini) []string {
-	loadedPrograms := make([]string, 0)
-	for _, section := range cfg.Sections() {
-		programOrEventListener, prefix := c.isProgramOrEventListener(section)
-
-		// if it is program or event listener
-		if programOrEventListener {
-			// get the number of processes
-			numProcs, err := section.GetInt("numprocs")
-			programName := section.Name[len(prefix):]
-			if err != nil {
-				numProcs = 1
-			}
-			procName, err := section.GetValue("process_name")
-			if numProcs > 1 {
-				if err != nil || strings.Index(procName, "%(process_num)") == -1 {
-					log.WithFields(log.Fields{
-						"numprocs":     numProcs,
-						"process_name": procName,
-					}).Error("no process_num in process name")
-				}
-			}
-			originalProcName := programName
-			if err == nil {
-				originalProcName = procName
-			}
-
-			originalCmd := section.GetValueWithDefault("command", "")
-
-			for i := 1; i <= numProcs; i++ {
-				envs := NewStringExpression("program_name", programName,
-					"process_num", fmt.Sprintf("%d", i),
-					"group_name", c.ProgramGroup.GetGroup(programName, programName),
-					"here", c.GetConfigFileDir())
-				envValue, err := section.GetValue("environment")
-				if err == nil {
-					for k, v := range *parseEnv(envValue) {
-						envs.Add(fmt.Sprintf("ENV_%s", k), v)
-					}
-				}
-				cmd, err := envs.Eval(originalCmd)
-				if err != nil {
-					log.WithFields(log.Fields{
-						log.ErrorKey: err,
-						"program":    programName,
-					}).Error("get envs failed")
-					continue
-				}
-				section.Add("command", cmd)
-
-				procName, err := envs.Eval(originalProcName)
-				if err != nil {
-					log.WithFields(log.Fields{
-						log.ErrorKey: err,
-						"program":    programName,
-					}).Error("get envs failed")
-					continue
-				}
-
-				section.Add("process_name", procName)
-				section.Add("numprocs_start", fmt.Sprintf("%d", i-1))
-				section.Add("process_num", fmt.Sprintf("%d", i))
-				entry := c.createEntry(procName, c.GetConfigFileDir())
-				entry.parse(section)
-				entry.Name = prefix + procName
-				group := c.ProgramGroup.GetGroup(programName, programName)
-				entry.Group = group
-				loadedPrograms = append(loadedPrograms, procName)
-			}
-		}
-	}
-	return loadedPrograms
-}
-
-// String converts configuration to the string
-func (c *Config) String() string {
-	buf := bytes.NewBuffer(make([]byte, 0))
-	for _, v := range c.entries {
-		fmt.Fprintf(buf, "[%s]\n", v.Name)
-		fmt.Fprintf(buf, "%s\n", v.String())
-	}
-	return buf.String()
-}
-
-// RemoveProgram removes program entry by its name
-func (c *Config) RemoveProgram(programName string) {
-	delete(c.entries, programName)
-	c.ProgramGroup.Remove(programName)
+	return
 }

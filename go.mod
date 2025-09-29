@@ -1,56 +1,51 @@
-module github.com/ochinchina/supervisord
+module github.com/qjpcpu/supervisord
 
-go 1.24.0
-
-toolchain go1.24.4
+go 1.22
 
 require (
-	github.com/gorilla/mux v1.8.1
-	github.com/gorilla/rpc v1.2.1
-	github.com/jessevdk/go-flags v1.6.1
-	github.com/kardianos/service v1.2.2
-	github.com/ochinchina/go-daemon v0.1.5
-	github.com/ochinchina/go-ini v1.0.1
-	github.com/ochinchina/go-reaper v0.0.0-20181016012355-6b11389e79fc
-	github.com/ochinchina/gorilla-xmlrpc v0.0.0-20171012055324-ecf2fe693a2c
-	github.com/ochinchina/supervisord/config v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/events v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/faults v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/logger v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/process v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/signals v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/types v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/util v0.0.0-20250610055946-d5a5470d11af
-	github.com/ochinchina/supervisord/xmlrpcclient v0.0.0-20250610055946-d5a5470d11af
-	github.com/prometheus/client_golang v1.22.0
-	github.com/sirupsen/logrus v1.9.3
-	google.golang.org/protobuf v1.36.6 // indirect; CVE-2024-24786
-)
-
-require (
-	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/hashicorp/go-envparse v0.1.0 // indirect
+	github.com/BurntSushi/toml v1.2.1
+	github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377
+	github.com/fatih/color v1.12.0
+	github.com/gin-gonic/gin v1.9.0
+	github.com/jedib0t/go-pretty/v6 v6.4.6
+	github.com/manifoldco/promptui v0.9.0
+	github.com/qjpcpu/channel v0.0.0-20250108092711-d7e5fbb51d0c
+	github.com/qjpcpu/filelog v0.0.0-20240130072449-09c1bf9d6a7e
+	github.com/qjpcpu/fp v0.0.0-20220629083539-d0513673d296
+	github.com/qjpcpu/glisp v0.0.0-20250926064623-dd7760d490cc
+	github.com/qjpcpu/go-daemon v0.0.0-20230415013535-df8b1d414c89
+	github.com/qjpcpu/http v0.0.0-20250928081903-f3efb256d7fb
+	github.com/sirupsen/logrus v1.9.0
+	github.com/bytedance/sonic v1.8.0 // indirect
+	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
+	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/dersebi/golang_exp v0.0.0-20121005063734-b599a102a57a // indirect
+	github.com/gin-contrib/sse v0.1.0 // indirect
+	github.com/go-playground/locales v0.14.1 // indirect
+	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/validator/v10 v10.11.2 // indirect
+	github.com/goccy/go-json v0.10.0 // indirect
+	github.com/google/go-cmp v0.5.9 // indirect
+	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0 // indirect
-	github.com/mitchellh/go-ps v1.0.0 // indirect
-	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/ochinchina/filechangemonitor v0.3.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.64.0 // indirect
-	github.com/prometheus/procfs v0.16.1 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/rogpeppe/go-charset v0.0.0-20190617161244-0dc95cdf6f31 // indirect
-	golang.org/x/sys v0.33.0 // indirect
-)
-
-replace (
-	github.com/ochinchina/supervisord/config => ./config
-	github.com/ochinchina/supervisord/events => ./events
-	github.com/ochinchina/supervisord/faults => ./faults
-	github.com/ochinchina/supervisord/logger => ./logger
-	github.com/ochinchina/supervisord/process => ./process
-	github.com/ochinchina/supervisord/signals => ./signals
-	github.com/ochinchina/supervisord/types => ./types
-	github.com/ochinchina/supervisord/util => ./util
-	github.com/ochinchina/supervisord/xmlrpcclient => ./xmlrpcclient
+	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+	github.com/leodido/go-urn v1.2.1 // indirect
+	github.com/mattn/go-colorable v0.1.11 // indirect
+	github.com/mattn/go-isatty v0.0.17 // indirect
+	github.com/mattn/go-runewidth v0.0.13 // indirect
+	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
+	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/pelletier/go-toml/v2 v2.0.6 // indirect
+	github.com/qjpcpu/qjson v0.0.0-20250818075036-660bd82ecdbe // indirect
+	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
+	github.com/ugorji/go/codec v1.2.9 // indirect
+	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
+	golang.org/x/net v0.14.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
+	google.golang.org/protobuf v1.28.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
