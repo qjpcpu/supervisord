@@ -63,8 +63,15 @@ func startDaemon(args []string) error {
 		return errors.New("supervisord is already running")
 	}
 
+	// Before starting as a new daemon, the program first acts as a "client"
+	// to check if another supervisord instance is already running (via ctl.Status()).
+	// This check requires reading the existing configuration using the default "client-mode" provider.
+	// Only after confirming that no other instance is active, we switch to the "master-mode"
+	// provider to take on the role of the main daemon.
+	prov := config.UseProvider(config.NewProvider(true))
+
 	flags, args := extractSupervisorFlags(args)
-	if _, ok := config.GetConfig(); !ok {
+	if prov.GetConfig().IsBlank() {
 		cnf := new(config.SupervisorConfig)
 		if err := cnf.ParseFlags(flags); err != nil {
 			return err
@@ -76,13 +83,17 @@ func startDaemon(args []string) error {
 			}
 			cnf.AddProcessConfig(p)
 		}
-		config.UpdateConfig(cnf)
+		prov.UpdateConfig(cnf)
 	}
-	cnf, _ := config.GetConfig()
+	cnf := prov.GetConfig()
 	if cnf.Daemonize {
-		Daemonize(func() { daemon.Get().Start() })
+		Daemonize(func() {
+			defer prov.Close()
+			daemon.Get().Start()
+		})
 		return nil
 	}
+	defer prov.Close()
 	return daemon.Get().Start()
 }
 

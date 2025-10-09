@@ -12,18 +12,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qjpcpu/supervisord/daemon"
 	chttp "github.com/qjpcpu/http"
+	"github.com/qjpcpu/supervisord/daemon"
 
-	"github.com/qjpcpu/supervisord/config"
 	"github.com/qjpcpu/fp"
+	"github.com/qjpcpu/supervisord/config"
 )
 
 const adminBaseURL = "http://admin:80"
 
 func getAdminClient() (chttp.Client, error) {
-	cnf, ok := config.GetConfig()
-	if !ok {
+	cnf := config.Provider().GetConfig()
+	if cnf.IsBlank() {
 		return nil, errors.New(`no supervisor config found`)
 	}
 	conn, err := net.Dial(cnf.AdminDialProtocol(), cnf.AdminDialAddr())

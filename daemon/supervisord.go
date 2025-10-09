@@ -11,10 +11,10 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/qjpcpu/supervisord/config"
-	"github.com/qjpcpu/supervisord/reaper"
 	chans "github.com/qjpcpu/channel"
 	"github.com/qjpcpu/fp"
+	"github.com/qjpcpu/supervisord/config"
+	"github.com/qjpcpu/supervisord/reaper"
 )
 
 var (
@@ -33,13 +33,12 @@ type Supervisord struct {
 
 func (s *Supervisord) Start() error {
 	ctx := context.Background()
-	if cnf, ok := config.GetConfig(); ok {
-		initLogger(cnf.Log)
-		if cnf.ReapZombie {
-			reaper.ReapZombie()
-		}
-		s.setenv(cnf)
+	cnf := config.Provider().GetConfig()
+	initLogger(cnf.Log)
+	if cnf.ReapZombie {
+		reaper.ReapZombie()
 	}
+	s.setenv(cnf)
 	if err := s.StartAll(ctx, true); err != nil {
 		return err
 	}
@@ -144,12 +143,14 @@ func (s *Supervisord) Reload() error {
 	s.processMutex.Lock()
 	defer s.processMutex.Unlock()
 	ctx := context.Background()
-	config.LoadConfig()
-	cnf, _ := config.GetConfig()
 	doneFlags := new(sync.Map)
 	s.processDone.Range(func(key, value interface{}) bool { doneFlags.Store(key, value); return true })
 	s.stopAll(ctx)
 
+	cnf, err := config.Provider().ReloadConfig()
+	if err != nil {
+		return err
+	}
 	s.admin.Reload(cnf.AdminListenAddr())
 	s.setenv(cnf)
 	s.processDone = doneFlags
@@ -192,10 +193,10 @@ func (s *Supervisord) AddProc(ctx context.Context, addProc *config.AddProcConfig
 		p.Shutdown()
 	}
 	if addProc.PersistConfig {
-		gconf, _ := config.GetConfig()
+		prov := config.Provider()
+		gconf := prov.GetConfig()
 		gconf.AddProcessConfig(proc)
-		config.UpdateConfig(gconf)
-		config.LoadConfig()
+		prov.UpdateConfig(gconf)
 	}
 	s.processMap[proc.Name] = NewProcess(proc, func(byuser bool) {
 		s.processDone.Store(proc.Name, struct{}{})
@@ -207,7 +208,7 @@ func (s *Supervisord) AddProc(ctx context.Context, addProc *config.AddProcConfig
 func (s *Supervisord) startAll(ctx context.Context, includeFinished bool) error {
 	alreadyDone := s.processDone
 	s.processDone = new(sync.Map)
-	cnf, _ := config.GetConfig()
+	cnf := config.Provider().GetConfig()
 	for _, p := range cnf.Process {
 		name := p.Name
 		if pro := s.processMap[name]; pro != nil {
@@ -239,7 +240,7 @@ func (s *Supervisord) stopAll(ctx context.Context) error {
 
 func Get() *Supervisord {
 	initOnce.Do(func() {
-		cnf, _ := config.GetConfig()
+		cnf := config.Provider().GetConfig()
 		s := &Supervisord{
 			admin:        newFuncServer(cnf.AdminListenAddr(), startAdminServer),
 			stopChan:     chans.NewStopChan(),
@@ -265,7 +266,7 @@ func installSignals(s *Supervisord) {
 				s.Stop(true)
 				os.Exit(-1)
 			case byuser := <-s.processExit:
-				cnf, _ := config.GetConfig()
+				cnf := config.Provider().GetConfig()
 				if cnf.ExitWhenAllProcessDone && s.IsAllProcessDone(context.Background()) && !byuser {
 					logger.Log("all process exited, supervisord would exit too")
 					s.Stop(true)
@@ -298,10 +299,7 @@ func (s *Supervisord) clearLogs() {
 }
 
 func (s *Supervisord) collectPurgeFiles() []string {
-	conf, ok := config.GetConfig()
-	if !ok {
-		return nil
-	}
+	conf := config.Provider().GetConfig()
 	if !conf.EnableLogFinalizer {
 		return nil
 	}

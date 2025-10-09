@@ -9,12 +9,9 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 
-	"github.com/qjpcpu/supervisord/sys"
-	"github.com/BurntSushi/toml"
 	"github.com/qjpcpu/fp"
+	"github.com/qjpcpu/supervisord/sys"
 )
 
 const (
@@ -115,6 +112,12 @@ func (self *ProcessConfig) Clone() *ProcessConfig {
 	return n
 }
 
+func (self *SupervisorConfig) IsBlank() bool {
+	bs1, err1 := config_marshal(self)
+	bs2, err2 := config_marshal(new(SupervisorConfig))
+	return err1 == nil && err2 == nil && bytes.Equal(bs1, bs2)
+}
+
 func (self *SupervisorConfig) ExistProcess(name string) bool {
 	for _, p := range self.Process {
 		if p.Name == name {
@@ -185,92 +188,6 @@ func findSupervisordConf() (string, error) {
 	}
 
 	return "", fmt.Errorf("fail to find supervisord.conf")
-}
-
-var (
-	configContainer atomic.Value
-	conffileMutex   sync.Mutex
-)
-
-func init() {
-	if err := LoadConfig(); err != nil {
-		configContainer.Store(&SupervisorConfigInfo{
-			Config: new(SupervisorConfig),
-			File:   ``,
-		})
-	}
-}
-
-func GetConfig() (*SupervisorConfig, bool) {
-	s := configContainer.Load().(*SupervisorConfigInfo)
-	return s.Config, s.File != ""
-}
-
-func UpdateConfig(c *SupervisorConfig) error {
-	oldinfo := configContainer.Load().(*SupervisorConfigInfo)
-	info := &SupervisorConfigInfo{
-		Config: c,
-		File:   oldinfo.File,
-	}
-	info.Config = c
-	if info.File == "" {
-		info.File = filepath.Join(supervisordDir(), `../conf/supervisord.conf`)
-	}
-	conffileMutex.Lock()
-	defer conffileMutex.Unlock()
-	dir := filepath.Dir(info.File)
-	if _, err := os.Stat(dir); err != nil {
-		os.MkdirAll(dir, 0755)
-	}
-	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(c); err != nil {
-		return err
-	}
-	if err := os.WriteFile(info.File, buf.Bytes(), 0644); err != nil {
-		return err
-	}
-	configContainer.Store(info)
-	return nil
-}
-
-func CheckConfigFile() error {
-	conffileMutex.Lock()
-	defer conffileMutex.Unlock()
-	file, err := findSupervisordConf()
-	if err != nil {
-		return err
-	}
-	bytes, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	var cnf SupervisorConfig
-	if err := toml.Unmarshal(bytes, &cnf); err != nil {
-		return err
-	}
-	return nil
-}
-
-func LoadConfig() error {
-	conffileMutex.Lock()
-	defer conffileMutex.Unlock()
-	file, err := findSupervisordConf()
-	if err != nil {
-		return err
-	}
-	bytes, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	var cnf SupervisorConfig
-	if err := toml.Unmarshal(bytes, &cnf); err != nil {
-		return err
-	}
-	configContainer.Store(&SupervisorConfigInfo{
-		Config: &cnf,
-		File:   file,
-	})
-	return nil
 }
 
 func (self *SupervisorConfig) ParseFlags(flags map[string]string) error {

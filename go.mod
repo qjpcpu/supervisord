@@ -3,7 +3,7 @@ module github.com/qjpcpu/supervisord
 go 1.22
 
 require (
-	github.com/BurntSushi/toml v1.2.1
+	github.com/BurntSushi/toml v1.5.0
 	github.com/erikdubbelboer/gspt v0.0.0-20210805194459-ce36a5128377
 	github.com/fatih/color v1.12.0
 	github.com/gin-gonic/gin v1.9.0
@@ -16,6 +16,9 @@ require (
 	github.com/qjpcpu/go-daemon v0.0.0-20230415013535-df8b1d414c89
 	github.com/qjpcpu/http v0.0.0-20250928081903-f3efb256d7fb
 	github.com/sirupsen/logrus v1.9.0
+)
+
+require (
 	github.com/bytedance/sonic v1.8.0 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
 	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect

@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qjpcpu/supervisord/config"
-	"github.com/qjpcpu/glisp"
-	ext "github.com/qjpcpu/glisp/extensions"
 	"github.com/gin-gonic/gin"
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/qjpcpu/glisp"
+	ext "github.com/qjpcpu/glisp/extensions"
+	"github.com/qjpcpu/supervisord/config"
 )
 
 func init() {
@@ -95,7 +95,7 @@ func startAdminServer(addr string) func() {
 	})
 	r.GET("/reload", func(c *gin.Context) {
 		logger.Log("[admin] reload %v", extractParams(c))
-		if err := config.CheckConfigFile(); err != nil {
+		if err := config.Provider().CheckConfigFile(); err != nil {
 			logger.Log("reload config %v", err)
 			c.String(http.StatusInternalServerError, "%v", err)
 			return
@@ -137,7 +137,7 @@ func startAdminServer(addr string) func() {
 					return
 				}
 			}()
-			config, _ := config.GetConfig()
+			config := config.Provider().GetConfig()
 			if config.DisableRCE {
 				c.Status(http.StatusUnauthorized)
 				return
