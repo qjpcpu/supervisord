@@ -74,12 +74,9 @@ func cmdAddProcHelpInfo() string {
 			Strings()
 	}
 	helpBuf := new(strings.Builder)
-	helpBuf.WriteString(fmt.Sprintf("supervisord %s [GLOBAL OPTIONS] NAME [PROCESS OPTIONS] %s args...\n", color.Yellow(`add-proc`), color.Yellow(`cmd`)))
-	helpBuf.WriteString(space(4) + "GLOBAL OPTIONS:\n")
-	typ := reflect.TypeOf(config.AddProcConfig{})
-	helpBuf.WriteString(strings.Join(getParams(typ), "\n") + "\n")
+	helpBuf.WriteString(fmt.Sprintf("supervisord %s NAME [PROCESS OPTIONS] %s args...\n", color.Yellow(`add-proc`), color.Yellow(`cmd`)))
 	helpBuf.WriteString(space(4) + "PROCESS OPTIONS:\n")
-	typ = reflect.TypeOf(config.ProcessConfig{})
+	typ := reflect.TypeOf(config.ProcessConfig{})
 	helpBuf.WriteString(strings.Join(getParams(typ), "\n") + "\n")
 	return helpBuf.String()
 }

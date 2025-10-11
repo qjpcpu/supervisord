@@ -41,7 +41,6 @@ type SupervisorConfig struct {
 
 type AddProcConfig struct {
 	*ProcessConfig
-	PersistConfig bool `toml:"persist" param:"persist,persist proc config"`
 }
 
 type ProcessConfig struct {

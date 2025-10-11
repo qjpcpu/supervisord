@@ -9,7 +9,7 @@ A lightweight, high-performance process management tool implemented in Go, inspi
 - **Auto-Restart**: Automatically attempts to restart child processes when they exit due to an unexpected error.
 - **Remote Control**: Includes a built-in HTTP/Unix Socket server, allowing remote control via a command-line client.
 - **Log Management**: Captures `stdout` and `stderr` of child processes, with support for log rotation and size limits.
-- **Dynamic Configuration**: Supports dynamically adding and persisting new process configurations at runtime using the `add-proc` command.
+- **Dynamic Configuration**: Supports dynamically adding new process configurations at runtime using the `add-proc` command.
 - **Cross-Platform**: Designed for compatibility with both Linux and Windows platforms.
 - **Script Execution**: Supports executing `glisp` scripts for advanced management tasks.
 
@@ -132,8 +132,8 @@ Stops all running child processes and shuts down the `supervisord` daemon.
 Dynamically add a new process while `supervisord` is running.
 
 ```bash
-# Dynamically add a process named "my-worker" and persist its configuration to supervisord.conf
-./supervisord add-proc -supvr.persist true my-worker /usr/bin/python worker.py
+# Dynamically add a process named "my-worker" 
+./supervisord add-proc my-worker /usr/bin/python worker.py
 ```
 
 ### `exec` - Remote Execution

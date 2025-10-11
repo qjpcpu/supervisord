@@ -192,12 +192,12 @@ func (s *Supervisord) AddProc(ctx context.Context, addProc *config.AddProcConfig
 	if p := s.processMap[proc.Name]; p != nil {
 		p.Shutdown()
 	}
-	if addProc.PersistConfig {
-		prov := config.Provider()
-		gconf := prov.GetConfig()
-		gconf.AddProcessConfig(proc)
-		prov.UpdateConfig(gconf)
-	}
+
+	prov := config.Provider()
+	gconf := prov.GetConfig()
+	gconf.AddProcessConfig(proc)
+	prov.UpdateConfig(gconf)
+
 	s.processMap[proc.Name] = NewProcess(proc, func(byuser bool) {
 		s.processDone.Store(proc.Name, struct{}{})
 		s.processExit <- byuser
