@@ -154,7 +154,7 @@ func startAdminServer(addr string) func() {
 	})
 	r.GET("/shutdown", func(c *gin.Context) {
 		logger.Log("[admin] shutdown %v", extractParams(c))
-		Get().Stop(c.Query("graceful") == "true")
+		Get().Stop(StopOption{StopImmediately: c.Query("now") == "true", ClearLog: c.Query("clear") == "true"})
 		c.String(http.StatusOK, "OK")
 	})
 	r.GET("/status", func(c *gin.Context) {
@@ -223,7 +223,7 @@ func startAdminServer(addr string) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil {
+		if err := srv.Shutdown(ctx); err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
 			logger.Log("Server forced to shutdown: %v", err)
 		}
 	}

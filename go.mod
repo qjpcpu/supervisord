@@ -8,20 +8,17 @@ require (
 	github.com/fatih/color v1.12.0
 	github.com/gin-gonic/gin v1.9.0
 	github.com/jedib0t/go-pretty/v6 v6.4.6
-	github.com/manifoldco/promptui v0.9.0
 	github.com/qjpcpu/channel v0.0.0-20250108092711-d7e5fbb51d0c
 	github.com/qjpcpu/filelog v0.0.0-20240130072449-09c1bf9d6a7e
 	github.com/qjpcpu/fp v0.0.0-20220629083539-d0513673d296
 	github.com/qjpcpu/glisp v0.0.0-20250926064623-dd7760d490cc
 	github.com/qjpcpu/go-daemon v0.0.0-20230415013535-df8b1d414c89
-	github.com/qjpcpu/http v0.0.0-20250928081903-f3efb256d7fb
-	github.com/sirupsen/logrus v1.9.0
+	github.com/qjpcpu/http v0.0.0-20251011105601-10a3180fdef4
 )
 
 require (
 	github.com/bytedance/sonic v1.8.0 // indirect
 	github.com/chenzhuoyu/base64x v0.0.0-20221115062448-fe3a3abad311 // indirect
-	github.com/chzyer/readline v0.0.0-20180603132655-2972be24d48e // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dersebi/golang_exp v0.0.0-20121005063734-b599a102a57a // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect

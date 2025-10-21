@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	chans "github.com/qjpcpu/channel"
 	"github.com/qjpcpu/fp"
@@ -29,6 +30,15 @@ type Supervisord struct {
 	processDone  *sync.Map
 	processMutex *sync.RWMutex
 	processExit  chan bool
+}
+
+type StopOption struct {
+	ClearLog        bool
+	StopImmediately bool
+}
+
+func (o StopOption) String() string {
+	return fmt.Sprintf("clear_log=%t stop_immediately=%t", o.ClearLog, o.StopImmediately)
 }
 
 func (s *Supervisord) Start() error {
@@ -90,7 +100,7 @@ func (s *Supervisord) StopProcess(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("process %s no exist", name)
 	}
-	p.Stop()
+	p.Stop(false)
 	return nil
 }
 
@@ -101,7 +111,7 @@ func (s *Supervisord) RestartProcess(ctx context.Context, name string) error {
 	if !ok {
 		return fmt.Errorf("process %s no exist", name)
 	}
-	p.Stop()
+	p.Stop(false)
 	p.Start()
 	s.processDone.Delete(name)
 	return nil
@@ -128,13 +138,13 @@ func (s *Supervisord) StartAll(ctx context.Context, includeFinished bool) error 
 func (s *Supervisord) StopAll(ctx context.Context) error {
 	s.processMutex.Lock()
 	defer s.processMutex.Unlock()
-	return s.stopAll(ctx)
+	return s.stopAll(ctx, false)
 }
 
 func (s *Supervisord) RestartAll(ctx context.Context) error {
 	s.processMutex.Lock()
 	defer s.processMutex.Unlock()
-	s.stopAll(ctx)
+	s.stopAll(ctx, false)
 	s.startAll(ctx, true)
 	return nil
 }
@@ -145,7 +155,7 @@ func (s *Supervisord) Reload() error {
 	ctx := context.Background()
 	doneFlags := new(sync.Map)
 	s.processDone.Range(func(key, value interface{}) bool { doneFlags.Store(key, value); return true })
-	s.stopAll(ctx)
+	s.stopAll(ctx, false)
 
 	cnf, err := config.Provider().ReloadConfig()
 	if err != nil {
@@ -158,15 +168,15 @@ func (s *Supervisord) Reload() error {
 	return nil
 }
 
-func (s *Supervisord) Stop(graceful bool) {
+func (s *Supervisord) Stop(option StopOption) {
 	s.processMutex.Lock()
 	defer s.processMutex.Unlock()
 	ctx := context.Background()
-	logger.Log("terminating all process and supervisord")
-	s.stopAll(ctx)
+	logger.Log("terminating all process and supervisord, option %s", option.String())
+	s.stopAll(ctx, option.StopImmediately)
 	logger.Log("all process terminated")
 	s.admin.Stop()
-	if graceful {
+	if option.ClearLog {
 		logger.Close()
 		s.clearLogs()
 	}
@@ -190,7 +200,7 @@ func (s *Supervisord) AddProc(ctx context.Context, addProc *config.AddProcConfig
 	defer s.processMutex.Unlock()
 	proc := addProc.ProcessConfig
 	if p := s.processMap[proc.Name]; p != nil {
-		p.Shutdown()
+		p.Shutdown(false)
 	}
 
 	prov := config.Provider()
@@ -215,7 +225,7 @@ func (s *Supervisord) startAll(ctx context.Context, includeFinished bool) error 
 			if st := pro.GetState().State; st == Running || st == Starting {
 				return fmt.Errorf("Error: %s is running", name)
 			}
-			pro.Shutdown()
+			pro.Shutdown(false)
 		}
 		s.processMap[name] = NewProcess(p, func(byuser bool) {
 			s.processDone.Store(name, struct{}{})
@@ -230,9 +240,9 @@ func (s *Supervisord) startAll(ctx context.Context, includeFinished bool) error 
 	return nil
 }
 
-func (s *Supervisord) stopAll(ctx context.Context) error {
+func (s *Supervisord) stopAll(ctx context.Context, stopImediately bool) error {
 	for _, p := range s.processMap {
-		p.Shutdown()
+		p.Shutdown(stopImediately)
 	}
 	s.processMap = make(map[string]*Process)
 	return nil
@@ -263,13 +273,13 @@ func installSignals(s *Supervisord) {
 			select {
 			case sig := <-sigs:
 				logger.Log("receive signal %v", sig)
-				s.Stop(true)
+				s.Stop(StopOption{})
 				os.Exit(-1)
 			case byuser := <-s.processExit:
 				cnf := config.Provider().GetConfig()
 				if cnf.ExitWhenAllProcessDone && s.IsAllProcessDone(context.Background()) && !byuser {
 					logger.Log("all process exited, supervisord would exit too")
-					s.Stop(true)
+					s.Stop(StopOption{})
 					return
 				}
 			}
@@ -289,9 +299,9 @@ func (s *Supervisord) clearLogs() {
 		go func() {
 			defer wg.Done()
 			if err := exec.Command("bash", "-c", fmt.Sprintf("rm -fr %v", file)).Run(); err != nil {
-				fmt.Printf("remove log %v fail %v\n", file, err)
+				fmt.Printf("[%s] remove log %v fail %v\n", time.Now().Format(`2006-01-02 15:04:05`), file, err)
 			} else {
-				fmt.Printf("remove log %v success\n", file)
+				fmt.Printf("[%s] remove log %v success\n", time.Now().Format(`2006-01-02 15:04:05`), file)
 			}
 		}()
 	}
@@ -300,9 +310,6 @@ func (s *Supervisord) clearLogs() {
 
 func (s *Supervisord) collectPurgeFiles() []string {
 	conf := config.Provider().GetConfig()
-	if !conf.EnableLogFinalizer {
-		return nil
-	}
 	appendStar := func(s []string) []string {
 		return fp.StreamOf(s).
 			Reject(func(v string) bool {

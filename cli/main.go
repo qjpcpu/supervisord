@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"strings"
-	"time"
-
-	"github.com/manifoldco/promptui"
 	"github.com/qjpcpu/supervisord/ctl"
 	"github.com/qjpcpu/supervisord/daemon"
 	"github.com/qjpcpu/supervisord/sys"
+	"os"
+	"strings"
 
 	"github.com/qjpcpu/supervisord/config"
 )
@@ -40,12 +37,19 @@ func Run() {
 		}
 		err = execCommand(vargs[0])
 	case `shutdown`:
-		vargs := getArgsFrom(2, args)
-		force := len(vargs) == 1 && vargs[0] == "-f"
-		if !confirmShutdown(force) {
-			return
+		option := daemon.StopOption{}
+		for _, elem := range getArgsFrom(2, args) {
+			switch elem {
+			case "-clear", "--clear":
+				option.ClearLog = true
+			case "-now", "--now":
+				option.StopImmediately = true
+			case "-h", "--help":
+				fmt.Println(cmdShutdownHelpInfo())
+				return
+			}
 		}
-		err = ctl.Shutdown(context.Background(), !force)
+		err = ctl.Shutdown(context.Background(), option)
 	case `help`, `-h`, `--help`, `-help`, `h`:
 		showHelp()
 	default:
@@ -213,26 +217,4 @@ func parseProcessConfig(args []string) (*config.ProcessConfig, error) {
 		return nil, err
 	}
 	return p, nil
-}
-
-func confirmShutdown(force bool) bool {
-	if force {
-		return true
-	}
-	prompt := promptui.Prompt{
-		Label:     "Stop all process and then exit supervisord",
-		IsConfirm: true,
-	}
-	result, err := prompt.Run()
-	if err != nil {
-		fmt.Println(time.Now().Format("15:04:05"), "Canceled")
-		return false
-	}
-	doShutdown := result == "y"
-	if doShutdown {
-		fmt.Println(time.Now().Format("15:04:05"), "Begin to shutdown supervisord")
-	} else {
-		fmt.Println(time.Now().Format("15:04:05"), "Canceled")
-	}
-	return doShutdown
 }

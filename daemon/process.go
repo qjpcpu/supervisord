@@ -130,15 +130,15 @@ func (p *Process) Start() error {
 	return <-cmd.errCh
 }
 
-func (p *Process) Stop() error {
-	cmd := newStopCmd()
+func (p *Process) Stop(stopImediately bool) error {
+	cmd := newStopCmd(stopImediately)
 	p.sendCmd(cmd)
 	<-cmd.done
 	return nil
 }
 
-func (p *Process) Shutdown() error {
-	p.Stop()
+func (p *Process) Shutdown(stopImediately bool) error {
+	p.Stop(stopImediately)
 	p.shutdown.Stop()
 	return nil
 }
@@ -191,14 +191,16 @@ ENTRY:
 	}
 }
 
-func (p *Process) stopProcess() {
-	p._stopProcess()
+func (p *Process) stopProcess(stopImediately bool) {
+	p._stopProcess(stopImediately)
 	p.releaseProcessResource()
 }
 
-func (p *Process) _stopProcess() {
+func (p *Process) _stopProcess(stopImediately bool) {
 	sig := p.config.StopSignal
-	if sig == "" {
+	if stopImediately {
+		sig = config.DefaultKillSignal
+	} else if sig == "" {
 		sig = config.DefaultStopSignal
 	}
 	ossig, err := signals.ToSignal(sig)

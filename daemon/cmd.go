@@ -9,8 +9,8 @@ func newStartCmd() *cmdStart {
 	return &cmdStart{errCh: make(chan error, 1)}
 }
 
-func newStopCmd() *cmdStop {
-	return &cmdStop{done: make(chan struct{}, 1)}
+func newStopCmd(stopImediately bool) *cmdStop {
+	return &cmdStop{done: make(chan struct{}, 1), stopImediately: stopImediately}
 }
 
 type cmdStart struct {
@@ -22,7 +22,8 @@ func (cmd *cmdStart) SendResult(err error) {
 }
 
 type cmdStop struct {
-	done chan struct{}
+	done           chan struct{}
+	stopImediately bool
 }
 
 func (p *Process) sendCmd(cmd interface{}) {
@@ -89,7 +90,7 @@ func (p *Process) onStopCommand(cmd *cmdStop) {
 	}()
 	go func() {
 		defer wg.Done()
-		p.stopProcess()
+		p.stopProcess(cmd.stopImediately)
 	}()
 	wg.Wait()
 }

@@ -55,32 +55,32 @@ func OmitProcessExitCode(ctx context.Context, name string) error {
 }
 
 func OmitAllProcessExitCode(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/omit_exit_code_all`))
+	return controlProcess(ctx, `/omit_exit_code_all`)
 }
 
 func StartAll(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/startall?by=cli`))
+	return controlProcess(ctx, `/startall?by=cli`)
 }
 
 func StopAll(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/stopall?by=cli`))
+	return controlProcess(ctx, `/stopall?by=cli`)
 }
 
 func RestartAll(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/restartall?by=cli`))
+	return controlProcess(ctx, `/restartall?by=cli`)
 }
 
 func Reload(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/reload?by=cli`))
+	return controlProcess(ctx, `/reload?by=cli`)
 }
 
 func Status(ctx context.Context) error {
-	return controlProcess(ctx, fmt.Sprintf(`/status?by=cli`))
+	return controlProcess(ctx, `/status?by=cli`)
 }
 
 func DumpEnv(ctx context.Context) error {
 	var states []daemon.ProcessState
-	result, _ := requestProcess(ctx, fmt.Sprintf(`/status?format=json`))
+	result, _ := requestProcess(ctx, `/status?format=json`)
 	json.Unmarshal([]byte(result), &states)
 	for _, p := range states {
 		fmt.Printf("[%s]\n", p.Config.Name)
@@ -91,8 +91,12 @@ func DumpEnv(ctx context.Context) error {
 	return nil
 }
 
-func Shutdown(ctx context.Context, graceful bool) error {
-	result, err := requestProcess(ctx, fmt.Sprintf(`/shutdown?by=cli&graceful=%s`, strconv.FormatBool(graceful)))
+func Shutdown(ctx context.Context, option daemon.StopOption) error {
+	result, err := requestProcess(ctx,
+		fmt.Sprintf(`/shutdown?by=cli&now=%s&clear=%s`,
+			strconv.FormatBool(option.StopImmediately),
+			strconv.FormatBool(option.ClearLog),
+		))
 	if err != nil && strings.Contains(err.Error(), "EOF") {
 		result = "OK"
 		err = nil

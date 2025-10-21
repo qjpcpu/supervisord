@@ -17,6 +17,7 @@ import (
 const (
 	DefaultStopWaitSecs    = 15
 	DefaultStopSignal      = "TERM"
+	DefaultKillSignal      = "KILL"
 	DefaultSuccessExitCode = 0
 )
 
@@ -32,7 +33,6 @@ type SupervisorConfig struct {
 	Log                    string           `toml:"log,omitempty" param:"log,supervisord log file"`
 	Process                []*ProcessConfig `toml:"process" param:"-"`
 	ExitWhenAllProcessDone bool             `toml:"exit_when_all_done" param:"exit_when_all_done,exit when all process finished with success"`
-	EnableLogFinalizer     bool             `toml:"enable_log_finalizer" param:"enable_log_finalizer,supervisor would not clean log when set false"`
 	Daemonize              bool             `toml:"daemonize" param:"daemonize,daemonize supervisord"`
 	ReapZombie             bool             `toml:"reap_zombie" param:"reap_zombie,reap zombie process"`
 	HideArgs               bool             `toml:"hide_args" param:"hide_args,hide command arguments"`
