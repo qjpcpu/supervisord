@@ -4,178 +4,205 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/qjpcpu/glisp"
 	ext "github.com/qjpcpu/glisp/extensions"
+	myhttp "github.com/qjpcpu/http"
 	"github.com/qjpcpu/supervisord/config"
 )
 
-func init() {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = nullDaemonLog{}
-	gin.DefaultErrorWriter = &loggerToWriter{}
-}
-
 func startAdminServer(addr string) func() {
-	r := gin.Default()
-	r.Use(RecoverMW)
-	r.GET("/omit_exit_code/:name", func(c *gin.Context) {
-		if err := Get().OmitProcessExitCode(c, c.Param("name")); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+	s := myhttp.NewServer()
+	renderSuccess := func(w http.ResponseWriter, text string) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, text)
+	}
+	renderObject := func(w http.ResponseWriter, text any) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(text)
+	}
+	renderError := func(w http.ResponseWriter, err error) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]any{"code": -1, "message": err.Error()})
+	}
+
+	s.GET("/omit_exit_code", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] omit exit code %s", extractParams(r))
+		if all := r.URL.Query().Get("all"); all == "true" {
+			if err := Get().OmitAllProcessExitCode(context.Background()); err != nil {
+				renderError(w, err)
+				return
+			}
+			renderSuccess(w, "OK")
 			return
 		}
-		c.String(http.StatusOK, "OK")
-	})
-	r.GET("/omit_exit_code_all", func(c *gin.Context) {
-		if err := Get().OmitAllProcessExitCode(c); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+		if err := Get().OmitProcessExitCode(context.Background(), r.URL.Query().Get("name")); err != nil {
+			renderError(w, err)
 			return
 		}
-		c.String(http.StatusOK, "OK")
+		renderSuccess(w, "OK")
 	})
-	r.GET("/start/:name", func(c *gin.Context) {
-		logger.Log("[admin] start `%v`", c.Param("name"))
-		if err := Get().StartProcess(c, c.Param("name")); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+	s.GET("/start", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] start %s", extractParams(r))
+		if all := r.URL.Query().Get("all"); all == "true" {
+			if err := Get().StartAll(context.Background(), true); err != nil {
+				renderError(w, err)
+				return
+			}
+			renderSuccess(w, "OK")
 			return
 		}
-		c.String(http.StatusOK, "OK")
-	})
-	r.GET("/stop/:name", func(c *gin.Context) {
-		logger.Log("[admin] stop `%v`", c.Param("name"))
-		if err := Get().StopProcess(c, c.Param("name")); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+		name := r.URL.Query().Get("name")
+		if err := Get().StartProcess(context.Background(), name); err != nil {
+			renderError(w, err)
 			return
 		}
-		c.String(http.StatusOK, "OK")
+		renderSuccess(w, "OK")
 	})
-	r.GET("/restart/:name", func(c *gin.Context) {
-		logger.Log("[admin] restart `%v`", c.Param("name"))
-		if err := Get().RestartProcess(c, c.Param("name")); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+	s.GET("/stop", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] stop %s", extractParams(r))
+		if all := r.URL.Query().Get("all"); all == "true" {
+			if err := Get().StopAll(context.Background()); err != nil {
+				renderError(w, err)
+				return
+			}
+			renderSuccess(w, "OK")
 			return
 		}
-		c.String(http.StatusOK, "OK")
-	})
-	r.GET("/startall", func(c *gin.Context) {
-		logger.Log("[admin] startall %v", extractParams(c))
-		if err := Get().StartAll(c, true); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+		name := r.URL.Query().Get("name")
+		if err := Get().StopProcess(context.Background(), name); err != nil {
+			renderError(w, err)
 			return
 		}
-		c.String(http.StatusOK, "OK")
+		renderSuccess(w, "OK")
 	})
-	r.GET("/stopall", func(c *gin.Context) {
-		logger.Log("[admin] stopall %v", extractParams(c))
-		if err := Get().StopAll(c); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+	s.GET("/restart", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] restart %s", extractParams(r))
+		if all := r.URL.Query().Get("all"); all == "true" {
+			if err := Get().RestartAll(context.Background()); err != nil {
+				renderError(w, err)
+				return
+			}
+			renderSuccess(w, "OK")
 			return
 		}
-		c.String(http.StatusOK, "OK")
-	})
-	r.GET("/restartall", func(c *gin.Context) {
-		logger.Log("[admin] restartall %v", extractParams(c))
-		if err := Get().RestartAll(c); err != nil {
-			c.String(http.StatusInternalServerError, "%v", err)
+		name := r.URL.Query().Get("name")
+		if err := Get().RestartProcess(context.Background(), name); err != nil {
+			renderError(w, err)
 			return
 		}
-		c.String(http.StatusOK, "OK")
+		renderSuccess(w, "OK")
 	})
-	r.GET("/reload", func(c *gin.Context) {
-		logger.Log("[admin] reload %v", extractParams(c))
+	s.GET("/reload", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] reload %s", extractParams(r))
 		if err := config.Provider().CheckConfigFile(); err != nil {
 			logger.Log("reload config %v", err)
-			c.String(http.StatusInternalServerError, "%v", err)
+			renderError(w, err)
 			return
 		}
 		if err := Get().Reload(); err != nil {
 			logger.Log("reload config %v", err)
-			c.String(http.StatusInternalServerError, "%v", err)
+			renderError(w, err)
 			return
 		}
-		c.String(http.StatusOK, "OK")
+		renderSuccess(w, "OK")
 	})
-	r.POST("/add_process", func(c *gin.Context) {
+	s.POST("/add_process", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] add process %s", extractParams(r))
 		procConfig := new(config.AddProcConfig)
-		if err := c.BindJSON(procConfig); err != nil {
-			c.PureJSON(http.StatusBadRequest, gin.H{"code": -1, "message": err.Error()})
+		if r.Body == nil {
+			renderError(w, errors.New("no body found"))
+			return
+		}
+		defer r.Body.Close()
+		bs, err := io.ReadAll(r.Body)
+		if err != nil {
+			renderError(w, err)
+			return
+		}
+		if err := json.Unmarshal(bs, procConfig); err != nil {
+			renderError(w, err)
 			return
 		}
 		if procConfig.Name == "" {
-			c.PureJSON(http.StatusBadRequest, gin.H{"code": -1, "message": "bad proc"})
+			renderError(w, errors.New("bad proc"))
 			return
 		}
-		if err := Get().AddProc(c, procConfig); err != nil {
-			c.PureJSON(http.StatusBadRequest, gin.H{"code": -1, "message": err.Error()})
+		if err := Get().AddProc(context.Background(), procConfig); err != nil {
+			renderError(w, err)
 			return
 		}
-		c.PureJSON(http.StatusOK, gin.H{"code": 0, "message": "ok"})
+		renderObject(w, map[string]any{"code": 0, "message": "ok"})
 	})
-	r.POST("/command", func(c *gin.Context) {
-		if body := c.Request.Body; body != nil {
+	s.POST("/command", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] run command %s", extractParams(r))
+		if body := r.Body; body != nil {
 			defer body.Close()
 			command, err := io.ReadAll(body)
 			if err != nil {
-				c.String(http.StatusBadRequest, err.Error())
+				renderError(w, err)
 				return
 			}
 			defer func() {
 				if r := recover(); r != nil {
-					c.String(http.StatusBadRequest, fmt.Sprintf("%v %v", r, string(debug.Stack())))
+					renderError(w, fmt.Errorf("%v %v", r, string(debug.Stack())))
 					return
 				}
 			}()
 			config := config.Provider().GetConfig()
 			if config.DisableRCE {
-				c.Status(http.StatusUnauthorized)
+				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			ret, err := runAdminCommand(config, command, c.Query("capture_stdout") == "true")
+			ret, err := runAdminCommand(config, command, r.URL.Query().Get("capture_stdout") == "true")
 			if err != nil {
-				c.String(http.StatusBadRequest, err.Error())
+				renderError(w, err)
 				return
 			}
-			c.String(http.StatusOK, string(ret))
+			renderSuccess(w, string(ret))
 			return
 		}
-		c.Status(http.StatusOK)
+		renderSuccess(w, "")
 	})
-	r.GET("/shutdown", func(c *gin.Context) {
-		logger.Log("[admin] shutdown %v", extractParams(c))
-		Get().Stop(StopOption{StopImmediately: c.Query("now") == "true", ClearLog: c.Query("clear") == "true"})
-		c.String(http.StatusOK, "OK")
+	s.GET("/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] shutdown %s", extractParams(r))
+		Get().Stop(StopOption{
+			StopImmediately: r.URL.Query().Get("now") == "true",
+			ClearLog:        r.URL.Query().Get("clear") == "true",
+		})
+		renderSuccess(w, "OK")
 	})
-	r.GET("/status", func(c *gin.Context) {
+	s.GET("/status", func(w http.ResponseWriter, r *http.Request) {
+		logger.Log("[admin-api] status %s", extractParams(r))
 		processList := Get().GetProcessList()
-		if c.Query("format") == `json` {
+		if r.URL.Query().Get("format") == `json` {
 			var states []ProcessState
 			for _, p := range processList {
 				state := p.GetState()
 				states = append(states, state)
 			}
-			c.PureJSON(http.StatusOK, states)
+			renderObject(w, states)
 			return
 		}
 		var text strings.Builder
-		w := table.NewWriter()
-		w.SetOutputMirror(&text)
+		t := table.NewWriter()
+		t.SetOutputMirror(&text)
 		row := table.Row{"name", "pid", "state", "start-time", "stop-time", "restart"}
-		w.AppendHeader(row)
+		t.AppendHeader(row)
 		for _, p := range processList {
 			state := p.GetState()
-			w.AppendRow([]interface{}{
+			t.AppendRow([]any{
 				state.Config.Name,
 				state.PID,
 				state.State,
@@ -184,46 +211,24 @@ func startAdminServer(addr string) func() {
 				state.Restart,
 			})
 		}
-		w.SetStyle(table.StyleLight)
-		w.Render()
-		c.String(http.StatusOK, text.String())
+		t.SetStyle(table.StyleLight)
+		t.Render()
+		renderSuccess(w, text.String())
 	})
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: r,
-	}
 	go func() {
-		if strings.HasPrefix(addr, "unix://") {
-			sock := strings.TrimPrefix(addr, "unix://")
-			sock, _ = filepath.Abs(sock)
-			dir := filepath.Dir(sock)
-			if _, err := os.Stat(dir); err != nil && os.IsNotExist(err) {
-				os.MkdirAll(dir, 0755)
-			}
-			os.RemoveAll(sock)
-			unixAddr, err := net.ResolveUnixAddr("unix", sock)
-			if err != nil {
-				logger.Log("listen err %v", err)
-				return
-			}
-			ln, err := net.ListenUnix("unix", unixAddr)
-			if err != nil {
-				logger.Log("listen err %v", err)
-				return
-			}
-			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-				logger.Log("listen err %v", err)
-			}
-		} else {
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				logger.Log("listen err %v", err)
-			}
+		network := "tcp"
+		if sock, ok := strings.CutPrefix(addr, "unix://"); ok {
+			network = "unix"
+			addr = sock
+		}
+		if err := s.ListenAndServe(network, addr); err != nil && err != http.ErrServerClosed {
+			logger.Log("listen err %v", err)
 		}
 	}()
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
-		if err := srv.Shutdown(ctx); err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
+		if err := s.Close(ctx); err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
 			logger.Log("Server forced to shutdown: %v", err)
 		}
 	}
@@ -288,41 +293,14 @@ func (self *scriptWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func extractParams(c *gin.Context) string {
-	vals, err := url.ParseQuery(c.Request.URL.RawQuery)
+func extractParams(r *http.Request) string {
+	vals, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return err.Error()
 	}
 	var str []string
 	for k := range vals {
-		str = append(str, fmt.Sprintf("%v=%v", k, vals.Get(k)))
+		str = append(str, fmt.Sprintf("%s=%s", k, vals.Get(k)))
 	}
 	return strings.Join(str, ",")
-}
-
-func RecoverMW(c *gin.Context) {
-	defer func() {
-		if err := recover(); err != nil {
-			var brokenPipe bool
-			if ne, ok := err.(*net.OpError); ok {
-				if se, ok := ne.Err.(*os.SyscallError); ok {
-					if strings.Contains(strings.ToLower(se.Error()), "broken pipe") || strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
-						brokenPipe = true
-					}
-				}
-			}
-			if brokenPipe {
-				logger.Log("%s", err)
-			} else {
-				logger.Log("[Recovery] panic recovered: err[%s] stack[%s]", err, debug.Stack())
-			}
-			if brokenPipe {
-				c.Error(err.(error)) // nolint: errcheck
-				c.Abort()
-			} else {
-				c.AbortWithStatus(http.StatusInternalServerError)
-			}
-		}
-	}()
-	c.Next()
 }

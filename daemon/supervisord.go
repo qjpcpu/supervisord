@@ -84,6 +84,13 @@ func (s *Supervisord) OmitProcessExitCode(ctx context.Context, name string) erro
 	return nil
 }
 
+func (s *Supervisord) IsProcessExist(name string) bool {
+	s.processMutex.RLock()
+	defer s.processMutex.RUnlock()
+	_, ok := s.processMap[name]
+	return ok
+}
+
 func (s *Supervisord) OmitAllProcessExitCode(ctx context.Context) error {
 	s.processMutex.RLock()
 	defer s.processMutex.RUnlock()

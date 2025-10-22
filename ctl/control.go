@@ -39,43 +39,43 @@ func getAdminClient() (chttp.Client, error) {
 }
 
 func StartProcess(ctx context.Context, name string) error {
-	return controlProcess(ctx, fmt.Sprintf(`/start/%s`, name))
+	return controlProcess(ctx, fmt.Sprintf(`/start?name=%s`, name))
 }
 
 func StopProcess(ctx context.Context, name string) error {
-	return controlProcess(ctx, fmt.Sprintf(`/stop/%s`, name))
+	return controlProcess(ctx, fmt.Sprintf(`/stop?name=%s`, name))
 }
 
 func RestartProcess(ctx context.Context, name string) error {
-	return controlProcess(ctx, fmt.Sprintf(`/restart/%s`, name))
+	return controlProcess(ctx, fmt.Sprintf(`/restart?name=%s`, name))
 }
 
 func OmitProcessExitCode(ctx context.Context, name string) error {
-	return controlProcess(ctx, fmt.Sprintf(`/omit_exit_code/%s`, name))
+	return controlProcess(ctx, fmt.Sprintf(`/omit_exit_code?name=%s`, name))
 }
 
 func OmitAllProcessExitCode(ctx context.Context) error {
-	return controlProcess(ctx, `/omit_exit_code_all`)
+	return controlProcess(ctx, `/omit_exit_code?all=true`)
 }
 
 func StartAll(ctx context.Context) error {
-	return controlProcess(ctx, `/startall?by=cli`)
+	return controlProcess(ctx, `/start?all=true`)
 }
 
 func StopAll(ctx context.Context) error {
-	return controlProcess(ctx, `/stopall?by=cli`)
+	return controlProcess(ctx, `/stop?all=true`)
 }
 
 func RestartAll(ctx context.Context) error {
-	return controlProcess(ctx, `/restartall?by=cli`)
+	return controlProcess(ctx, `/restart?all=true`)
 }
 
 func Reload(ctx context.Context) error {
-	return controlProcess(ctx, `/reload?by=cli`)
+	return controlProcess(ctx, `/reload`)
 }
 
 func Status(ctx context.Context) error {
-	return controlProcess(ctx, `/status?by=cli`)
+	return controlProcess(ctx, `/status`)
 }
 
 func DumpEnv(ctx context.Context) error {
@@ -93,7 +93,7 @@ func DumpEnv(ctx context.Context) error {
 
 func Shutdown(ctx context.Context, option daemon.StopOption) error {
 	result, err := requestProcess(ctx,
-		fmt.Sprintf(`/shutdown?by=cli&now=%s&clear=%s`,
+		fmt.Sprintf(`/shutdown?now=%s&clear=%s`,
 			strconv.FormatBool(option.StopImmediately),
 			strconv.FormatBool(option.ClearLog),
 		))
@@ -161,6 +161,7 @@ func controlProcess(ctx context.Context, path string) error {
 }
 
 func requestProcess(ctx context.Context, path string) (string, error) {
+	path = addQuery(path)
 	var result string
 	err := fp.M(getAdminClient()).
 		Map(func(client chttp.Client) ([]byte, error) {
@@ -172,6 +173,13 @@ func requestProcess(ctx context.Context, path string) (string, error) {
 		Val().
 		To(&result)
 	return result, err
+}
+
+func addQuery(path string) string {
+	if strings.Contains(path, "?") {
+		return path + "&by=local_cli"
+	}
+	return path + "?by=local_cli"
 }
 
 func postProcess(ctx context.Context, path string, payload interface{}) (string, error) {
