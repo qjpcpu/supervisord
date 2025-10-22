@@ -21,7 +21,7 @@ A lightweight, high-performance process management tool implemented in Go, inspi
 ### 1. Build
 
 ```bash
-go build -o supervisord ./main.go
+./build.sh
 ```
 
 ### 2. Configuration File
@@ -165,6 +165,19 @@ Execute a script file (e.g., a `glisp` script) on the running daemon. This can b
 ```bash
 # Execute a script file
 ./supervisord exec /path/to/your/script.glisp
+```
+
+## Usage as a Library
+
+Besides being used as a standalone binary, `go-supervisord` can also be integrated into your own Go projects as a library. By calling `cli.Run()`, you can embed its functionality directly into your application.
+
+```go
+import "github.com/qjpcpu/supervisord/cli"
+
+func main() {
+  // This will start the supervisord client or daemon
+  cli.Run()
+}
 ```
 
 ## 🆚 Comparison with `github.com/ochinchina/supervisord`
