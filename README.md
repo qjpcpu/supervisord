@@ -124,9 +124,6 @@ This is the most common command, used to manage processes.
 
 # Display environment variables of a process
 ./supervisord service env my-app
-
-# Dynamically treat a process's exit code as success
-./supervisord service omit-exit-code my-app
 ```
 
 ### `reload` - Reload Configuration
@@ -169,3 +166,33 @@ Execute a script file (e.g., a `glisp` script) on the running daemon. This can b
 # Execute a script file
 ./supervisord exec /path/to/your/script.glisp
 ```
+
+## 🆚 Comparison with `github.com/ochinchina/supervisord`
+
+Both `github.com/qjpcpu/supervisord` (this project) and `github.com/ochinchina/supervisord` are excellent process management tools written in Go, inspired by the classic Python `supervisord`. However, they have some significant differences in design philosophy and feature implementation.
+
+| Feature | `qjpcpu/supervisord` (This Project) | `ochinchina/supervisord` |
+| :--- | :--- | :--- |
+| **Design Philosophy** | A modern, lightweight Go implementation focusing on performance and extensibility with a modern toolchain. | Aims to be a drop-in replacement for the original Python `supervisord`, with high compatibility for its configuration and XML-RPC API. |
+| **Configuration Format** | Uses `TOML` format, which is structured, clear, and easy to read/write. | Uses `INI` format, compatible with the original `supervisord`'s configuration files. |
+| **Admin Interface** | Provides an **HTTP/JSON** based API over TCP or Unix Socket, offering a simple and modern interface. | Implements an **XML-RPC** interface compatible with the original, allowing the use of the standard `supervisorctl` client. |
+| **Command-line Tool** | Includes a feature-rich built-in client with commands like `service status`, `add-proc`, `reload`, etc. | Also provides a built-in `supervisorctl` client and is compatible with the original one. |
+| **Extensibility** | Features a built-in **`glisp` script engine**, allowing users to execute scripts via the `exec` command for advanced, custom management tasks. | Extensibility is mainly focused on faithfully implementing the original's features; no built-in script engine. |
+| **Dynamic Management** | Supports dynamically adding new processes at runtime via the `add-proc` command without reloading the entire configuration. | Supports updating process groups via `supervisorctl`'s `add` and `remove` commands. |
+| **Security Features** | Provides a `disable_rce` option to disable remote script execution with a single switch for enhanced security. | Security relies on the authentication configuration of the XML-RPC interface. |
+| **Dependencies & Ecosystem** | Uses a set of the author's own libraries (e.g., `fp`, `glisp`, `http`), forming a unique Go tool ecosystem. | Has fewer dependencies, focusing on standalone operation and compatibility with the original ecosystem. |
+
+### Summary
+
+-   **Choose `qjpcpu/supervisord` (This Project)** if you:
+    -   Prefer using `TOML` for configuration.
+    -   Want to integrate with a more modern `HTTP/JSON` API.
+    -   Need advanced, flexible automation through scripting (`glisp`).
+    -   Are looking for a lightweight, high-performance, and modern process management solution for new Go projects.
+
+-   **Choose `ochinchina/supervisord`** if you:
+    -   Need a smooth migration path from an existing Python `supervisord` environment.
+    -   Want to continue using `.ini` configuration files and the standard `supervisorctl` client.
+    -   Have system integrations that rely on the XML-RPC interface.
+
+In conclusion, `qjpcpu/supervisord` is a more Go-idiomatic and modern implementation that offers greater flexibility and extensibility. In contrast, `ochinchina/supervisord` is an excellent compatibility-focused alternative, designed for seamlessly replacing the original Python version.
